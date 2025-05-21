@@ -101,6 +101,67 @@ def perciatelli_reward_function(
 
   return reward
 
+def nav_reward_function(
+    simulator_state: simulator_data.SimulatorState,
+    *,
+    station_keeping_radius_km: float = 50.0,
+    reward_dropoff: float = 0.4,
+    reward_halflife: float = 100.0) -> float:
+  """The reward function used to train Perciatelli44.
+
+  The reward function for the environment returns 1.0 when the balloon is
+  with the station keeping radius, and roughly:
+
+    reward_dropoff * 2^(-distance_from_radius / reward_halflife)
+
+  when outside the station keeping radius. That is, the reward immediately
+  outside the station keeping radius is reward_dropoff, and the reward
+  decays expontentially as the balloon moves further from the radius.
+
+  Args:
+    simulator_state: The current state of the simulator to calculate
+      reward for.
+    station_keeping_radius_km: The desired station keeping radius in km. When
+      the balloon is within this radius, the reward is 1.0.
+    reward_dropoff: The reward multiplier for when the balloon is outside of
+      station keeping range. See reward definition above.
+    reward_halflife: The half life of the reward function. See reward
+      definition above.
+
+  Returns:
+    A reward for the current simulator_state.
+  """
+  balloon_state = simulator_state.balloon_state
+  station = simulator_state.balloon_state.station
+  x, y = balloon_state.x, balloon_state.y
+  dx, dy = balloon_state.x - station[0], balloon_state.y - station[1]
+  radius = units.Distance(km=station_keeping_radius_km)
+
+  # x, y are in meters.
+  distance = units.relative_distance(dx, dy)
+
+  # Base reward - distance to station keeping radius.
+  if distance <= radius:
+    # Reward is 1.0 within the radius.
+    reward = 1.0
+  else:
+    # Exponential decay outside boundary with drop
+    # ln(0.5) is approximately -0.69314718056.
+    reward = reward_dropoff * math.exp(
+        -0.69314718056 / reward_halflife * (distance - radius).kilometers)
+
+  # Power regularization. Only applied when using more power (going down)
+  # and there isn't excess energy available.
+  if (balloon_state.last_command == control.AltitudeControlCommand.DOWN and
+      not balloon_state.excess_energy):
+    max_multiplier = 0.95
+    penalty_skew = 0.3
+    scale = transforms.linear_rescale_with_saturation(
+        balloon_state.acs_power.watts, 100.0, 300.0)
+    multiplier = max_multiplier - penalty_skew * scale
+    reward *= multiplier
+
+  return reward
 
 @gin.configurable
 class BalloonEnv(gym.Env):
@@ -298,3 +359,53 @@ class BalloonEnv(gym.Env):
   def __exit__(self, *args: Any) -> bool:
     self.close()
     return False  # Reraise any exceptions
+
+class BalloonNavEnv(BalloonEnv):
+  """BalloonNavEnv is a subclass of BalloonEnv for navigation tasks."""
+
+  def __init__(
+      self,
+      *,  # All arguments after this are keyword-only.
+      station_keeping_radius_km: float = 50.0,
+      arena: Optional[balloon_arena.BalloonArenaInterface] = None,
+      reward_function: Callable[[simulator_data.SimulatorState], float] = nav_reward_function,
+      feature_constructor_factory: Callable[
+          [wind_field.WindField, standard_atmosphere.Atmosphere],
+          features.FeatureConstructor] = features.PerciatelliFeatureConstructor,
+      wind_field_factory: Callable[[], wind_field.WindField] = (
+          generative_wind_field.generative_wind_field_factory),
+      seed: Optional[int] = None,
+      renderer: Optional[randerer_lib.Renderer] = None):
+    """Constructs a Balloon Navigation Environment.
+
+    Args:
+      station_keeping_radius_km: The desired station keeping radius in km.
+      arena: A balloon arena (simulator) to wrap. If set to None, it will use
+        the default balloon nav arena.
+      reward_function: A function that takes the current simulator state
+        and returns a scalar reward.
+      feature_constructor_factory: A callable which returns a new
+        FeatureConstructor object when called. The factory takes a forecast
+        (WindField) and an initial observation from the simulator
+        (SimulatorObservation).
+      wind_field_factory: A callable which returns a new WindField object.
+      seed: A PRNG seed for the environment.
+      renderer: An optional renderer for rendering flight paths/simulator state.
+    """
+    self.radius = units.Distance(km=station_keeping_radius_km)
+    self._reward_fn = reward_function
+    self._feature_constructor_factory = feature_constructor_factory
+    self._global_iteration = 0
+
+    if arena is None:
+      self.arena = balloon_arena.BalloonNavArena(self._feature_constructor_factory,
+                                                 wind_field_factory())
+    else:
+      self.arena = arena
+
+    self._renderer = renderer
+    if renderer is not None:
+      self.metadata = {'render.modes': self._renderer.render_modes}
+
+    # Use time in microseconds if a seed is not supplied.
+    self.reset(seed=seed if seed is not None else int(time.time() * 1e6))

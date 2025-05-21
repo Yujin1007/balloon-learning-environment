@@ -22,7 +22,10 @@ from balloon_learning_environment.agents import agent as base_agent
 from balloon_learning_environment.env import balloon_env
 from balloon_learning_environment.metrics import collector_dispatcher
 from balloon_learning_environment.metrics import statistics_instance
-
+from balloon_learning_environment.env.balloon import balloon
+from balloon_learning_environment.eval import suites
+from balloon_learning_environment.utils import units
+import wandb
 
 def get_collector_data(
     collectors: Optional[Iterable[str]] = None
@@ -35,6 +38,10 @@ def get_collector_data(
     collector_constructors.append(
         collector_dispatcher.AVAILABLE_COLLECTORS[c])
   return collector_constructors
+
+def _balloon_is_within_radius(balloon_state: balloon.BalloonState,
+                              radius: units.Distance) -> bool:
+  return units.relative_distance(balloon_state.x, balloon_state.y) <= radius
 
 
 def _run_one_episode(env: balloon_env.BalloonEnv,
@@ -50,11 +57,17 @@ def _run_one_episode(env: balloon_env.BalloonEnv,
   terminal = False
   final_episode_step = max_episode_length
   r = 0.0
-
+  step_count = 0
+  total_reward = 0.0
+  steps_within_radius = 0
   for i in range(max_episode_length):
     # Pass action to environment.
     obs, r, terminal, _ = env.step(a)
-
+    total_reward += r
+    balloon_state = env.get_simulator_state().balloon_state
+    steps_within_radius += _balloon_is_within_radius(balloon_state,
+                                                      env.radius)
+    step_count += 1
     if i % render_period == 0:
       env.render()  # No-op if renderer is None.
 
@@ -72,11 +85,11 @@ def _run_one_episode(env: balloon_env.BalloonEnv,
 
   # The environment has no timeout, so terminal really is a terminal state.
   agent.end_episode(r, terminal)
-
+  twr = steps_within_radius / step_count
   dispatcher.end_episode(
       statistics_instance.StatisticsInstance(
           step=final_episode_step, action=a, reward=r, terminal=terminal))
-
+  return total_reward, twr
 
 def run_training_loop(base_dir: str,
                       env: balloon_env.BalloonEnv,
@@ -103,6 +116,9 @@ def run_training_loop(base_dir: str,
       has an effect if the environments renderer is not None.
     episodes_per_iteration: The number of episodes to run per iteration.
   """
+  wandb.init(project="balloon-learning", name="/".join(base_dir.split("/")[1:]))
+  rewards=[]
+  twrs=[]
   checkpoint_dir = osp.join(base_dir, 'checkpoints')
   # Possibly reload the latest checkpoint, and start from the next episode
   # number.
@@ -120,12 +136,19 @@ def run_training_loop(base_dir: str,
   dispatcher.pre_training()
   for iteration in range(start_iteration, num_iterations):
     for _ in range(episodes_per_iteration):
-      _run_one_episode(env,
+      episode_reward, twr =_run_one_episode(env,
                        agent,
                        dispatcher,
                        max_episode_length,
                        render_period)
-
+      rewards.append(episode_reward)
+      twrs.append(twr)
+      avg_reward = sum(rewards) / len(rewards)
+      avg_twr = sum(twrs) / len(twrs)
+      wandb.log({"iteration": iteration, "avg_reward": avg_reward})
+      wandb.log({"iteration": iteration, "episode_reward": episode_reward})
+      wandb.log({"iteration": iteration, "avg_twr": avg_twr})
+      wandb.log({"iteration": iteration, "twr50": twr})
     agent.save_checkpoint(checkpoint_dir, iteration)
 
   dispatcher.end_training()

@@ -271,7 +271,9 @@ class PerciatelliFeatureConstructor(FeatureConstructor):
   """A feature constructor for Perciatelli features."""
 
   def __init__(self, forecast: wind_field.WindField,
-               atmosphere: standard_atmosphere.Atmosphere) -> None:
+               atmosphere: standard_atmosphere.Atmosphere,
+               station: tuple = (units.Distance(kilometers=0), units.Distance(kilometers=0))
+               ) -> None:
     """Creates a new feature constructor object for Perciatelli features.
 
     Args:
@@ -295,6 +297,7 @@ class PerciatelliFeatureConstructor(FeatureConstructor):
     self.windgp = wind_gp.WindGP(forecast)
     self._atmosphere = atmosphere
     self._last_balloon_state = None
+    self._station = station
 
   def observe(self, observation: simulator_data.SimulatorObservation) -> None:
     """Observes the latest observation and updates the internal state."""
@@ -410,11 +413,12 @@ class PerciatelliFeatureConstructor(FeatureConstructor):
     feature_vector[4] = math.cos(sunrise_time)
 
     # 5-7: Heading and distance to station.
-    distance_to_station = units.relative_distance(
-        balloon_state.x, balloon_state.y)
+    dx = balloon_state.x - self._station[0]
+    dy = balloon_state.y - self._station[1]
+    distance_to_station = units.relative_distance(dx, dy)
     # Heading is from North, and increases to the East.
     angle_heading_to_station = math.atan2(
-        -balloon_state.x.kilometers, -balloon_state.y.kilometers)
+        -dx.kilometers, -dy.kilometers)
     # Sin of heading to station.
     feature_vector[5] = math.sin(angle_heading_to_station)
     # Cos of heading to station.
@@ -466,11 +470,12 @@ class PerciatelliFeatureConstructor(FeatureConstructor):
         will be inserted into feature_vector[16:].
     """
     feature_index = 16  # The end of the ambient features.
-
+    dx = self._last_balloon_state.x - self._station[0]
+    dy = self._last_balloon_state.y - self._station[1]
     # Batch query the WindGP for the winds in the wind column.
     batch_query = np.zeros((self.num_pressure_levels, 4))
-    batch_query[:, 0] = self._last_balloon_state.x.meters
-    batch_query[:, 1] = self._last_balloon_state.y.meters
+    batch_query[:, 0] = dx.meters
+    batch_query[:, 1] = dy.meters
     batch_query[:, 2] = self.pressure_levels
     batch_query[:, 3] = self._last_balloon_state.time_elapsed.total_seconds()
 
@@ -498,10 +503,8 @@ class PerciatelliFeatureConstructor(FeatureConstructor):
 
     # Compute where the station is relative to us.
     # Since the station is at (0, 0), this is pretty easy.
-    station_direction = -np.array(
-        [self._last_balloon_state.x.meters, self._last_balloon_state.y.m])
-    distance_to_station = units.relative_distance(self._last_balloon_state.x,
-                                                  self._last_balloon_state.y)
+    station_direction = -np.array([dx.meters, dy.meters], dtype=np.float32)
+    distance_to_station = units.relative_distance(dx, dy)
     # Normalize for downstream use.
     station_direction /= (distance_to_station + TOLERANCE).meters
 
