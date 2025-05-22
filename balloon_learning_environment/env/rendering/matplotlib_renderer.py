@@ -30,7 +30,7 @@ from mpl_toolkits import mplot3d  # pylint: disable=unused-import
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from mpl_toolkits.mplot3d import art3d
 import numpy as np
-
+from matplotlib.animation import FFMpegWriter
 
 class MatplotlibRenderer(renderer.Renderer):
   """Contains functions for rendering the simulator state with matplotlib."""
@@ -38,8 +38,11 @@ class MatplotlibRenderer(renderer.Renderer):
   def __init__(self):
     self.reset()
 
-    self._x_lims = (-150.0, 150.0)  # km
-    self._y_lims = (-150.0, 150.0)  # km
+    self._x_lims = (-1500.0, 1500.0)  # km
+    self._y_lims = (-1500.0, 1500.0)  # km
+    # self._x_lims = (-150.0, 150.0)  # km
+    # self._y_lims = (-150.0, 150.0)  # km
+    
     self._altitude_lims = (15, 20)  # km
     self._target_x = 0.0
     self._target_y = 0.0
@@ -69,12 +72,26 @@ class MatplotlibRenderer(renderer.Renderer):
   def step(self, state: simulator_data.SimulatorState) -> None:
     balloon_state = state.balloon_state
     altitude = state.atmosphere.at_pressure(balloon_state.pressure).height
+    self._target_x = balloon_state.station[0].kilometers
+    self._target_y = balloon_state.station[1].kilometers
+    # print(f"Render function Target X: {balloon_state.station[0].kilometers:.2f} km, Target Y: {self._target_y:.2f} km")
     self._charge.append(balloon_state.battery_soc * 100.0)
     self._datetime.append(balloon_state.date_time)
     self._trajectory.append(
         np.asarray([balloon_state.x.kilometers,
                     balloon_state.y.kilometers,
                     altitude.kilometers]))
+
+  def start_video(self, filename: str, fps: int = 30) -> None:
+    """Starts recording the video."""
+    metadata = {'title': 'Balloon Simulation', 'artist': 'Matplotlib'}
+    self._video_writer = FFMpegWriter(fps=fps, metadata=metadata)
+    self._video_writer.setup(self._fig, filename)
+  def stop_video(self) -> None:
+    """Stops recording the video."""
+    if self._video_writer is not None:
+        self._video_writer.finish()
+        self._video_writer = None
 
   def render(self,
              mode: Text,
@@ -105,7 +122,10 @@ class MatplotlibRenderer(renderer.Renderer):
     self._plot_power()
 
     if mode == 'human':
-      plt.pause(0.001)  # Renders the image and runs the GUI loop.
+      if hasattr(self, '_video_writer') and self._video_writer is not None:
+        self._video_writer.grab_frame()
+      else:
+        plt.pause(0.001)  # Renders the image and runs the GUI loop.
     elif mode == 'rgb_array' or mode == 'tensorboard':
       self._fig.canvas.draw()
       rgb_string = self._fig.canvas.tostring_rgb()
@@ -156,7 +176,14 @@ class MatplotlibRenderer(renderer.Renderer):
                         fill=False)
     ax.add_patch(circle)
     art3d.pathpatch_2d_to_3d(circle, z=self._altitude_lims[0], zdir='z')
-
+    ax.text2D(
+        0.98, 0.98,
+        f"Target X: {self._target_x:.2f} km\nTarget Y: {self._target_y:.2f} km",
+        transform=ax.transAxes,
+        ha='left', va='bottom',
+        fontsize=10,
+        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="black", lw=0.5, alpha=0.7)
+    )
     # Draw the trajectory
     ax.plot3D(flight_path[:, 0],
               flight_path[:, 1],

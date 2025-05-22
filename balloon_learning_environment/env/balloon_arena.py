@@ -308,6 +308,7 @@ class BalloonNavArena(BalloonArenaInterface):
     self.moving_station_x = units.Distance(kilometers=0)
     self.moving_station_y = units.Distance(kilometers=0)
     self.goal = units.Distance(kilometers=3000)
+    self.flag_reset_wind = False
     # We call reset here to ensure the arena can always be run without
     # an explicit call to reset. However, the preferred way to run the
     # arena is to call reset immediately to return the intiial observation.
@@ -377,6 +378,7 @@ class BalloonNavArena(BalloonArenaInterface):
         dy = self._balloon.state.y - self.moving_station_y
         distance = units.relative_distance(dx, dy)
         goal_distance = self.goal - units.relative_distance(self.moving_station_x, self.moving_station_y)
+        # print(f"goal:{self.moving_station_x.kilometers}, {self.moving_station_y.kilometers} distance:{distance.kilometers} goal_distance:{goal_distance.kilometers}")
         if distance.kilometers < threshold_km:
             if goal_distance.kilometers < 51:
               #station keeping from this moment
@@ -384,7 +386,8 @@ class BalloonNavArena(BalloonArenaInterface):
             else:
               self.moving_station_x += units.Distance(kilometers=self.moving_station_dx.kilometers)
               self.moving_station_y += units.Distance(kilometers=self.moving_station_dy.kilometers)
-              self._balloon.station = (self.moving_station_x, self.moving_station_y)
+              self._balloon.state.station = (self.moving_station_x, self.moving_station_y)
+              self._balloon.state.station_move_cnt += 1
             new_center = spherical_geometry.calculate_latlng_from_offset(
               old_center_latlng, self.moving_station_x, self.moving_station_y)
             self._balloon.state.center_latlng = new_center
@@ -396,7 +399,16 @@ class BalloonNavArena(BalloonArenaInterface):
             # Re-initialize feature constructor with new wind field
             self.feature_constructor = self._feature_constructor_factory(self._wind_field, self._atmosphere, (self.moving_station_x, self.moving_station_y))
             self.feature_constructor.observe(self.get_measurements())
-
+        
+        if self.flag_reset_wind:
+          self._rng, wind_field_key = jax.random.split(self._rng, 2)
+          current_time = self._balloon.state.date_time
+          self._wind_field.reset(wind_field_key, current_time)
+          # Re-initialize feature constructor with new wind field
+          self.feature_constructor = self._feature_constructor_factory(self._wind_field, self._atmosphere, (self.moving_station_x, self.moving_station_y))
+          self.feature_constructor.observe(self.get_measurements())
+          self.flag_reset_wind = False
+      
   def get_simulator_state(self) -> simulator_data.SimulatorState:
     return simulator_data.SimulatorState(self.get_balloon_state(),
                                          self._wind_field,

@@ -26,7 +26,7 @@ from balloon_learning_environment.env.balloon import balloon
 from balloon_learning_environment.eval import suites
 from balloon_learning_environment.utils import units
 import wandb
-
+import os
 def get_collector_data(
     collectors: Optional[Iterable[str]] = None
 ) -> List[collector_dispatcher.CollectorConstructorType]:
@@ -41,14 +41,18 @@ def get_collector_data(
 
 def _balloon_is_within_radius(balloon_state: balloon.BalloonState,
                               radius: units.Distance) -> bool:
-  return units.relative_distance(balloon_state.x, balloon_state.y) <= radius
+  dx = balloon_state.x - balloon_state.station[0]
+  dy = balloon_state.y - balloon_state.station[1]
+  return units.relative_distance(dx, dy) <= radius
 
 
 def _run_one_episode(env: balloon_env.BalloonEnv,
                      agent: base_agent.Agent,
                      dispatcher: collector_dispatcher.CollectorDispatcher,
                      max_episode_length: int,
-                     render_period: int) -> None:
+                     render_period: int,
+                     video_flag: bool =False,
+                     video_path=None) -> None:
   """Runs an agent in an environment for one episode."""
   dispatcher.begin_episode()
   obs = env.reset()
@@ -60,6 +64,8 @@ def _run_one_episode(env: balloon_env.BalloonEnv,
   step_count = 0
   total_reward = 0.0
   steps_within_radius = 0
+  if video_flag:
+    env.renderer.start_video(video_path, fps=30)
   for i in range(max_episode_length):
     # Pass action to environment.
     obs, r, terminal, _ = env.step(a)
@@ -79,6 +85,8 @@ def _run_one_episode(env: balloon_env.BalloonEnv,
     if terminal:
       final_episode_step = i + 1
       break
+    if i%(960-1) == 0:
+      env.flag_reset_wind = True
 
     # Pass observation to agent, request new action.
     a = agent.step(r, obs)
@@ -89,6 +97,8 @@ def _run_one_episode(env: balloon_env.BalloonEnv,
   dispatcher.end_episode(
       statistics_instance.StatisticsInstance(
           step=final_episode_step, action=a, reward=r, terminal=terminal))
+  if video_flag:
+    env.renderer.stop_video()
   return total_reward, twr
 
 def run_training_loop(base_dir: str,
@@ -132,15 +142,22 @@ def run_training_loop(base_dir: str,
   agent.set_summary_writer(dispatcher.get_summary_writer())
 
   agent.set_mode(base_agent.AgentMode.TRAIN)
-
   dispatcher.pre_training()
   for iteration in range(start_iteration, num_iterations):
-    for _ in range(episodes_per_iteration):
+    for ep in range(episodes_per_iteration):
+      if ep < episodes_per_iteration - 1:
+        video_flag = True
+        video_path = osp.join(base_dir, "video")
+        video_path = osp.join(video_path, f"{ep}.mp4")
+        os.makedirs(os.path.dirname(video_path), exist_ok=True)  # Ensure directory exists
+      
       episode_reward, twr =_run_one_episode(env,
                        agent,
                        dispatcher,
                        max_episode_length,
-                       render_period)
+                       render_period,
+                       video_flag,
+                       video_path)
       rewards.append(episode_reward)
       twrs.append(twr)
       avg_reward = sum(rewards) / len(rewards)
@@ -149,6 +166,8 @@ def run_training_loop(base_dir: str,
       wandb.log({"iteration": iteration, "episode_reward": episode_reward})
       wandb.log({"iteration": iteration, "avg_twr": avg_twr})
       wandb.log({"iteration": iteration, "twr50": twr})
+      if video_flag:
+        video_flag = False
     agent.save_checkpoint(checkpoint_dir, iteration)
 
   dispatcher.end_training()

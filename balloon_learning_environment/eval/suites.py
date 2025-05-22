@@ -41,6 +41,7 @@ _eval_suites['medium_eval'] = EvaluationSuite(list(range(1_000)), 960)
 _eval_suites['small_eval'] = EvaluationSuite(list(range(100)), 960)
 _eval_suites['tiny_eval'] = EvaluationSuite(list(range(10)), 960)
 _eval_suites['micro_eval'] = EvaluationSuite([0], 960)
+_eval_suites['nav_eval'] = EvaluationSuite(list(range(100)), 2400)
 all_strata = []
 for strata in ['hardest', 'hard', 'mid', 'easy', 'easiest']:
   _eval_suites[f'{strata}_strata'] = EvaluationSuite(

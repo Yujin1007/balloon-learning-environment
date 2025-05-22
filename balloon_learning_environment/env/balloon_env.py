@@ -99,6 +99,7 @@ def perciatelli_reward_function(
     multiplier = max_multiplier - penalty_skew * scale
     reward *= multiplier
 
+
   return reward
 
 def nav_reward_function(
@@ -133,10 +134,8 @@ def nav_reward_function(
   """
   balloon_state = simulator_state.balloon_state
   station = simulator_state.balloon_state.station
-  x, y = balloon_state.x, balloon_state.y
   dx, dy = balloon_state.x - station[0], balloon_state.y - station[1]
   radius = units.Distance(km=station_keeping_radius_km)
-
   # x, y are in meters.
   distance = units.relative_distance(dx, dy)
 
@@ -160,7 +159,7 @@ def nav_reward_function(
         balloon_state.acs_power.watts, 100.0, 300.0)
     multiplier = max_multiplier - penalty_skew * scale
     reward *= multiplier
-
+  reward += balloon_state.station_move_cnt * 0.4
   return reward
 
 @gin.configurable
@@ -277,7 +276,6 @@ class BalloonEnv(gym.Env):
     if self._renderer is not None:
       self._renderer.reset()
       self._renderer.step(self.arena.get_simulator_state())
-
     if return_info:
       simulator_state = self.get_simulator_state()
       info = self._get_info(simulator_state.balloon_state)
@@ -286,7 +284,7 @@ class BalloonEnv(gym.Env):
     else:
       return observation
 
-  def render(self, mode: str = 'human') -> Union[None, np.ndarray, Text]:
+  def render(self, mode: str = 'rgb_array') -> Union[None, np.ndarray, Text]:
     """Renders a frame.
 
     Args:
@@ -409,3 +407,7 @@ class BalloonNavEnv(BalloonEnv):
 
     # Use time in microseconds if a seed is not supplied.
     self.reset(seed=seed if seed is not None else int(time.time() * 1e6))
+
+  @property
+  def renderer(self):
+      return self._renderer

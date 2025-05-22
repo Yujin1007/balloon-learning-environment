@@ -27,6 +27,8 @@ from balloon_learning_environment.utils import run_helpers
 import gym
 import matplotlib
 import numpy as np
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 flags.DEFINE_string('agent', 'dqn', 'Type of agent to create.')
@@ -101,7 +103,7 @@ def main(_) -> None:
       collector_constructors,
       render_period=FLAGS.render_period,
       episodes_per_iteration=FLAGS.episodes_per_iteration)
-
+  
   if FLAGS.base_dir is not None:
     image_save_path = osp.join(FLAGS.base_dir, 'balloon_path.png')
     img = env.render(mode='rgb_array')

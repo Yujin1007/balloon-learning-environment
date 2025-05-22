@@ -177,7 +177,7 @@ class BalloonState(object):
   station: Tuple[units.Distance, units.Distance] = (
         units.Distance(kilometers=0), units.Distance(kilometers=0)
     )
-
+  station_move_cnt = int(0)
   pressure: float = 6000.0  # [Pa]
 
   ambient_temperature: float = 206.0  # [K]

@@ -35,6 +35,8 @@ flags.DEFINE_string('agent', 'dqn', 'The name of the agent to create.')
 flags.DEFINE_enum('suite', 'big_eval',
                   suites.available_suites(),
                   'The evaluation suite to run.')
+flags.DEFINE_string('env_name', 'BalloonLearningEnvironment-v0',
+                    'Name of environment to create.')
 flags.DEFINE_string(
     'wind_field', 'generative',
     'The wind field type to use. See the _WIND_FIELDS dict below for options.')
@@ -109,7 +111,7 @@ def main(argv: Sequence[str]) -> None:
     renderer = _RENDERERS[FLAGS.renderer]()
 
   wf_factory = run_helpers.get_wind_field_factory(FLAGS.wind_field)
-  env = gym.make('BalloonLearningEnvironment-v0',
+  env = gym.make(FLAGS.env_name,
                  wind_field_factory=wf_factory,
                  renderer=renderer)
 
@@ -118,17 +120,22 @@ def main(argv: Sequence[str]) -> None:
       env.action_space.n,
       observation_shape=env.observation_space.shape)
   if FLAGS.checkpoint_dir is not None and FLAGS.checkpoint_idx is not None:
-    agent.load_checkpoint(FLAGS.checkpoint_dir, FLAGS.checkpoint_idx)
-
+    # agent.load_checkpoint(FLAGS.checkpoint_dir, FLAGS.checkpoint_idx)
+    agent.reload_latest_checkpoint(FLAGS.checkpoint_dir)
+    
   eval_suite = suites.get_eval_suite(FLAGS.suite)
 
   if FLAGS.num_shards > 1:
     start = int(len(eval_suite.seeds) * FLAGS.shard_idx / FLAGS.num_shards)
     end = int(len(eval_suite.seeds) * (FLAGS.shard_idx + 1) / FLAGS.num_shards)
     eval_suite.seeds = eval_suite.seeds[start:end]
-
+  video_dir = os.path.join(FLAGS.output_dir, 'video')
+  os.makedirs(video_dir, exist_ok=True)
+  video_path = os.path.join(video_dir, f'{FLAGS.agent}.mp4')
+  renderer.start_video(video_path, fps=30)
   eval_result = eval_lib.eval_agent(agent, env, eval_suite,
                                     render_period=FLAGS.render_period)
+  renderer.stop_video()
   write_result(eval_result)
 
 
